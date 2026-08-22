@@ -10,7 +10,7 @@ const baseURL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
 
 // When true the app uses mock data; when false it calls the real backend.
 const useMock =
-  String(import.meta.env.VITE_USE_MOCK_DATA ?? "true").toLowerCase() === "true";
+  String(import.meta.env.VITE_USE_MOCK_DATA ?? "false").toLowerCase() === "true";
 
 const apiClient = axios.create({
   baseURL,
@@ -27,6 +27,120 @@ let tasks = [...mockTasks];
 let interactions = [...mockAIInteractions];
 
 const nextId = (list) => (list.length ? Math.max(...list.map((x) => x.id)) + 1 : 1);
+
+function mapProject(project) {
+  return {
+    id: project.project_id,
+    name: project.project_name,
+    description: project.description,
+    techStack: project.technology_stack
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean),
+    createdAt: project.created_at,
+  };
+}
+
+function toProjectRequest(project) {
+  return {
+    project_name: project.name,
+    description: project.description,
+    technology_stack: Array.isArray(project.techStack)
+      ? project.techStack.join(", ")
+      : project.techStack,
+  };
+}
+
+function mapTask(task) {
+  return {
+    id: task.task_id,
+    projectId: task.project_id,
+    title: task.title,
+    description: task.description,
+    priority: task.priority,
+    status: task.status,
+    aiGenerated: task.ai_generated,
+    createdAt: task.created_at,
+    updatedAt: task.updated_at,
+  };
+}
+
+function toTaskRequest(task) {
+  return {
+    project_id: Number(task.projectId),
+    title: task.title,
+    description: task.description,
+    priority: task.priority,
+    status: task.status,
+    ai_generated: task.aiGenerated,
+  };
+}
+
+function mapInteraction(interaction) {
+  return {
+    id: interaction.interaction_id,
+    projectId: interaction.project_id,
+    aiTaskType: interaction.task_type,
+    userPrompt: interaction.prompt,
+    response: mapAIPlanResponse(interaction),
+    responseText: interaction.ai_response,
+    modelName: interaction.model_name,
+    createdAt: interaction.created_at,
+  };
+}
+
+function toAIPlanRequest(request) {
+  return {
+    project_id: Number(request.projectId),
+    task_type: request.aiTaskType,
+    prompt: request.requirement,
+  };
+}
+
+function mapAIPlanResponse(interaction) {
+  const sectionNames = [
+    "Requirement Understanding",
+    "Frontend Tasks",
+    "Backend Tasks",
+    "Database Tasks",
+    "Testing Steps",
+    "Possible Blockers",
+    "Recommended Next Action",
+  ];
+  const sections = {};
+  const answer = interaction.ai_response
+    .replace(/\*\*/g, "")
+    .replace(/\r\n/g, "\n");
+  const sectionPattern = new RegExp(
+    `(?:^|\\n)\\s*\\d+\\.\\s*(${sectionNames.join("|")})\\s*:?[ \\t]*([\\s\\S]*?)(?=\\n?\\s*\\d+\\.\\s*(?:${sectionNames.join("|")})\\s*:?[ \\t]*|$)`,
+    "g"
+  );
+  let match;
+
+  while ((match = sectionPattern.exec(answer)) !== null) {
+    const key = match[1]
+      .replace(/(?:^| )([A-Z])/g, (_, letter) => letter.toLowerCase())
+      .replace(/ /g, "");
+    const lines = match[2]
+      .split("\n")
+      .map((line) => line.replace(/^\s*(?:[-*]|\d+[.)])\s*/, "").trim())
+      .filter(Boolean);
+    sections[key] = ["Frontend Tasks", "Backend Tasks", "Database Tasks", "Testing Steps", "Possible Blockers"].includes(match[1])
+      ? lines
+      : lines.join(" ");
+  }
+
+  return {
+    ...sections,
+    interactionId: interaction.interaction_id,
+    projectId: interaction.project_id,
+    taskType: interaction.task_type,
+    prompt: interaction.prompt,
+    responseText: interaction.ai_response,
+    modelName: interaction.model_name,
+    createdAt: interaction.created_at,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Health
@@ -70,7 +184,7 @@ export async function getProjects() {
     return [...projects];
   }
   const { data } = await apiClient.get("/api/projects");
-  return data;
+  return data.map(mapProject);
 }
 
 export async function getProjectById(projectId) {
@@ -79,7 +193,7 @@ export async function getProjectById(projectId) {
     return projects.find((p) => p.id === Number(projectId)) || null;
   }
   const { data } = await apiClient.get(`/api/projects/${projectId}`);
-  return data;
+  return mapProject(data);
 }
 
 export async function createProject(projectData) {
@@ -93,8 +207,11 @@ export async function createProject(projectData) {
     projects = [...projects, project];
     return project;
   }
-  const { data } = await apiClient.post("/api/projects", projectData);
-  return data;
+  const { data } = await apiClient.post(
+    "/api/projects",
+    toProjectRequest(projectData)
+  );
+  return mapProject(data);
 }
 
 export async function updateProject(projectId, projectData) {
@@ -105,8 +222,11 @@ export async function updateProject(projectId, projectData) {
     );
     return projects.find((p) => p.id === Number(projectId));
   }
-  const { data } = await apiClient.put(`/api/projects/${projectId}`, projectData);
-  return data;
+  const { data } = await apiClient.put(
+    `/api/projects/${projectId}`,
+    toProjectRequest(projectData)
+  );
+  return mapProject(data);
 }
 
 export async function deleteProject(projectId) {
@@ -129,7 +249,7 @@ export async function getTasks() {
     return [...tasks];
   }
   const { data } = await apiClient.get("/api/tasks");
-  return data;
+  return data.map(mapTask);
 }
 
 export async function createTask(taskData) {
@@ -144,8 +264,11 @@ export async function createTask(taskData) {
     tasks = [...tasks, task];
     return task;
   }
-  const { data } = await apiClient.post("/api/tasks", taskData);
-  return data;
+  const { data } = await apiClient.post(
+    "/api/tasks",
+    toTaskRequest(taskData)
+  );
+  return mapTask(data);
 }
 
 export async function updateTask(taskId, taskData) {
@@ -158,8 +281,11 @@ export async function updateTask(taskId, taskData) {
     );
     return tasks.find((t) => t.id === Number(taskId));
   }
-  const { data } = await apiClient.put(`/api/tasks/${taskId}`, taskData);
-  return data;
+  const { data } = await apiClient.put(
+    `/api/tasks/${taskId}`,
+    toTaskRequest(taskData)
+  );
+  return mapTask(data);
 }
 
 export async function updateTaskStatus(taskId, status) {
@@ -173,7 +299,7 @@ export async function updateTaskStatus(taskId, status) {
     return tasks.find((t) => t.id === Number(taskId));
   }
   const { data } = await apiClient.patch(`/api/tasks/${taskId}/status`, { status });
-  return data;
+  return mapTask(data);
 }
 
 export async function deleteTask(taskId) {
@@ -194,8 +320,11 @@ export async function generateAIPlan(requestData) {
     await delay(900);
     return buildMockAIResponse(requestData);
   }
-  const { data } = await apiClient.post("/api/ai/plan", requestData);
-  return data;
+  const { data } = await apiClient.post(
+    "/api/ai/plan",
+    toAIPlanRequest(requestData)
+  );
+  return mapAIPlanResponse(data);
 }
 
 export async function getAIHistory(projectId) {
@@ -206,11 +335,10 @@ export async function getAIHistory(projectId) {
     }
     return [...interactions];
   }
-  const url = projectId
-    ? `/api/ai/history/${projectId}`
-    : "/api/ai/history";
+  if (!projectId) return [];
+  const url = `/api/ai/history/${projectId}`;
   const { data } = await apiClient.get(url);
-  return data;
+  return data.map(mapInteraction);
 }
 
 export async function deleteAIInteraction(interactionId) {
@@ -235,8 +363,7 @@ export async function saveAIInteraction(interaction) {
     interactions = [record, ...interactions];
     return record;
   }
-  const { data } = await apiClient.post("/api/ai/history", interaction);
-  return data;
+  return interaction;
 }
 
 // ---------------------------------------------------------------------------

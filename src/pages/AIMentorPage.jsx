@@ -234,6 +234,12 @@ function AIResponse({ response }) {
     { key: "recommendedNextAction", label: "Recommended Next Action", type: "text" },
   ];
 
+  const hasSections = sections.some((section) => response[section.key]);
+
+  if (!hasSections && response.responseText) {
+    return <pre className="text-sm" style={{ whiteSpace: "pre-wrap" }}>{response.responseText}</pre>;
+  }
+
   return (
     <div>
       {sections.map((s) => {
